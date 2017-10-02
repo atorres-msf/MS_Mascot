@@ -1,0 +1,142 @@
+/*
+  Droid 22 Joystick Controller - Nano
+
+  written: 09 Sep 2017 by Andres Torres  http://www.makerspaceforsyth.com
+  updated: 28 Sep 2017 by Andres Torres
+*/
+
+#include <SoftwareSerial.h>
+SoftwareSerial serialData(3, 2); // RX, TX
+
+#include <Servo.h>
+Servo nPservo, nTservo;  // create servo objects to control servos
+
+// configuration variables
+int hbLED = 13;           // heartbeat LED pin
+int motSpd = 255;         // motor drive max speed
+int FWD = 1; int REV = 0; // motor direction
+int ofst = 100;           // data formatting offsets
+int dedStk = 10/2;        // joystick dead zone
+
+// pin assignments
+int btnCal = 4;           // calibration start button pin
+int lMotD = 42; int lMotP = 44; // left motor control pins
+int rMotD = 43; int rMotP = 45; // left motor control pins
+int tFanCon = 52;               // torso fan control
+
+// variables
+String dataPacket = "";
+int jstk_P = 100; int jstk_T = 100;
+int jstk_X = 100; int jstk_Y = 100;
+int cent_X = 000; int cent_Y = 000;
+int lefMotDir = 0; int lefMotPWM = 0;
+int rhtMotDir = 0; int rhtMotPWM = 0;
+int pulse = 255; float pulseDec = 1; // signal connect monitor
+
+void setup() {
+  Serial.begin(9600);
+  serialData.begin(9600);
+
+  pinMode(hbLED, OUTPUT);
+  pinMode(A0, INPUT); pinMode(A1, INPUT);
+  pinMode(A2, INPUT); pinMode(A3, INPUT);
+  pinMode(lMotD, OUTPUT); pinMode(lMotP, OUTPUT);
+  pinMode(rMotD, OUTPUT); pinMode(rMotP, OUTPUT);
+  pinMode(btnCal, INPUT_PULLUP);
+
+  jstkCal();  // movement joystick calibration
+  
+  analogWrite(hbLED, 255);    // status LED
+  analogWrite(tFanCon, 50);   // set torso fans high (full speed = 0, off = 255)
+
+  nPservo.attach(22);  nTservo.attach(23);  // neck servo pins
+}
+
+void loop() {
+  if (serialData.available()) {
+    pulse = 255; analogWrite(hbLED, pulse);
+    Serial.write(serialData.read());
+  }
+
+  if (Serial.available()) {
+    serialData.write(Serial.read());
+  }
+
+  // signal check indicator decrement
+  if (pulse > 0){
+    pulse = pulse - pulseDec;
+    analogWrite(hbLED, int(pulse));
+  }
+  
+  // switch & button input
+  
+  // joystick input
+  jstk_P = analogRead(A0); jstk_T = analogRead(A1);
+  jstk_X = analogRead(A2); jstk_Y = analogRead(A3);
+  // debug data
+  //dataPacket = "Raw Pan/Tilt=" + String(jstk_P) + "," + String(jstk_T) + " X,Y=" + String(jstk_X) + "," + String(jstk_Y);
+  //Serial.println(dataPacket);       // send to serial monitor
+
+  // joystick data processing
+  jstk_P = map(jstk_P,1023,0,0,180); jstk_T = map(jstk_T,1023,0,0,180); // may have to adjust for direction and range of servos
+  jstk_X = map(jstk_X,1023,0,-255,255); jstk_Y = map(jstk_Y,0,1023,255,-255);
+
+  // debug data - uncomment for raw data from joysticks
+  dataPacket = "Pre-Algorithm - Pan/Tilt=" + String(jstk_P) + "," + String(jstk_T) + " X,Y=" + String(jstk_X) + "," + String(jstk_Y);
+  Serial.println(dataPacket);       // send to serial monitor
+  
+  // movement joystick algorithm
+  lefMotPWM = 0; rhtMotPWM = 0;
+  lefMotDir = 0; rhtMotDir = 0;
+  
+  if (jstk_Y > (cent_Y + dedStk)){ // forward movement
+    lefMotDir = FWD; rhtMotDir = FWD;
+    lefMotPWM = map(abs(jstk_Y),0,255,0,motSpd);
+    rhtMotPWM = map(abs(jstk_Y),0,255,0,motSpd);
+    
+    if (jstk_X < (cent_X - dedStk)){ // turning forward left
+      lefMotPWM = lefMotPWM - map(abs(jstk_X),0,255,0,abs(jstk_Y));
+    }
+    
+    if (jstk_X > (cent_X + dedStk)){ // turning forward right
+      rhtMotPWM = rhtMotPWM - map(abs(jstk_X),0,255,0,abs(jstk_Y));
+    }
+  }
+
+    if (jstk_Y < (cent_Y - dedStk)){ // backward movement
+    lefMotDir = REV; rhtMotDir = REV;
+    lefMotPWM = map(abs(jstk_Y),0,255,0,motSpd);
+    rhtMotPWM = map(abs(jstk_Y),0,255,0,motSpd);
+    
+      if (jstk_X < (cent_X - dedStk)){ // turning backward left
+        lefMotPWM = lefMotPWM - map(abs(jstk_X),0,255,0,abs(jstk_Y));
+      }
+    
+      if (jstk_X > (cent_X + dedStk)){ // turning backward right
+        rhtMotPWM = rhtMotPWM - map(abs(jstk_X),0,255,0,abs(jstk_Y));
+      }
+  }
+
+  if (jstk_Y > cent_Y - dedStk && jstk_Y < cent_Y + dedStk) { // rotate
+    
+    if (jstk_X < cent_X - dedStk) { // rotate left
+      lefMotDir = REV; rhtMotDir = FWD;
+      lefMotPWM = map(abs(jstk_X),0,255,0,motSpd); rhtMotPWM = map(abs(jstk_X),0,255,0,motSpd);
+    }
+
+    if (jstk_X > cent_X + dedStk) { // rotate right
+      lefMotDir = FWD; rhtMotDir = REV;
+      lefMotPWM = map(abs(jstk_X),0,255,0,motSpd); rhtMotPWM = map(abs(jstk_X),0,255,0,motSpd);
+    }
+  }
+
+  // work is done here
+  digitalWrite(lMotD, lefMotDir); digitalWrite(rMotD, rhtMotDir); // set motor direction
+  analogWrite(lMotP, lefMotPWM); analogWrite(rMotP, rhtMotPWM);   // set motor speeds
+  
+  nPservo.write(jstk_P); nTservo.write(jstk_T); delay(15);        // neck servo sets
+}
+
+void jstkCal() {
+cent_X = map(analogRead(A2),1023,0,-255,255); cent_Y = map(analogRead(A3),0,1023,255,-255);
+}
